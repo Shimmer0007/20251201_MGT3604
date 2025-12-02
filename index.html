@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Tableau 3D Slide Deck</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: '#FCAE6E',
+                        dark: '#1F2937',
+                        light: '#F9FAFB'
+                    }
+                }
+            }
+        }
+    </script>
+        <style>
+        /* --- 核心布局 --- */
+        body, html { margin: 0; padding: 0; overflow: hidden; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        
+        #canvas-container {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0;
+            background: linear-gradient(to bottom, #ffffff, #f3f4f6);
+        }
+
+        #ui-layer {
+            position: relative; z-index: 10; height: 100%;
+            display: flex; flex-direction: column; justify-content: center;
+            pointer-events: none;
+        }
+
+        /* --- 玻璃拟态幻灯片卡片 --- */
+        .slide-container {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.95);
+            width: 90%; max-width: 1400px;
+            height: 85vh; /* 增加高度以容纳图表 */
+            pointer-events: auto;
+            transition: all 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+            opacity: 0;
+            visibility: hidden;
+            
+            /* 玻璃质感 */
+            background: rgba(255, 255, 255, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 
+                0 4px 6px -1px rgba(0, 0, 0, 0.05), 
+                0 20px 40px -5px rgba(0, 0, 0, 0.1);
+            
+            overflow: hidden;
+            display: flex; flex-direction: column;
+        }
+
+        .slide-container.active {
+            opacity: 1; visibility: visible;
+            transform: translate(-50%, -50%) scale(1);
+            z-index: 20;
+        }
+
+        /* 进出场动画位置 */
+        .slide-container.prev { transform: translate(-150%, -50%) scale(0.8) rotate(-5deg); }
+        .slide-container.next { transform: translate(50%, -50%) scale(0.8) rotate(5deg); }
+
+        /* --- Tableau 容器修复 --- */
+        /* 强制覆盖 Tableau 的内联样式，确保它不撑破卡片 */
+        .tableauPlaceholder {
+            width: 100% !important;
+            height: 100% !important;
+            border-radius: 0 0 24px 24px;
+            overflow: hidden;
+        }
+        iframe {
+            border: none !important;
+        }
+
+        /* --- 导航按钮 --- */
+        .nav-btn {
+            pointer-events: auto; position: absolute; top: 50%;
+            transform: translateY(-50%);
+            background: white; color: #4B5563;
+            width: 56px; height: 56px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.5);
+            z-index: 50;
+        }
+        .nav-btn:hover {
+            background: #FCAE6E; color: white;
+            transform: translateY(-50%) scale(1.1);
+        }
+        .nav-prev { left: 30px; }
+        .nav-next { right: 30px; }
+
+        /* --- 指示器 --- */
+        .indicators {
+            position: absolute; bottom: 25px; left: 50%;
+            transform: translateX(-50%);
+            display: flex; gap: 12px; pointer-events: auto;
+            z-index: 50;
+            background: rgba(255,255,255,0.5);
+            padding: 8px 16px; border-radius: 20px;
+            backdrop-filter: blur(4px);
+        }
+        .dot {
+            width: 10px; height: 10px;
+            background: #D1D5DB; border-radius: 50%;
+            cursor: pointer; transition: all 0.3s;
+        }
+        .dot.active { background: #FCAE6E; transform: scale(1.3); }
+
+        /* 标题栏 */
+        .slide-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            display: flex; justify-content: space-between; align-items: center;
+            background: rgba(255,255,255,0.4);
+        }
+        /* Fix for Tableau resizing issue */
+        .tableauPlaceholder {
+            position: relative !important;
+        }
+        .tableauPlaceholder iframe {
+            width: 100% !important;
+            height: 100% !important;
+            border: none !important;
+            position: absolute;
+            top: 0;
+            left: 0;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+    </style>
+    </head>
+    <body>
+
+        <div id="canvas-container"></div>
+
+        <div id="ui-layer">
+
+            <button class="nav-btn nav-prev" onclick="changeSlide(-1)">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none"
+                    viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"
+                    class="w-6 h-6"><path stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+            </button>
+            <button class="nav-btn nav-next" onclick="changeSlide(1)">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none"
+                    viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"
+                    class="w-6 h-6"><path stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+            </button>
+
+            <div class="slide-container active" id="slide-0">
+                <div class="slide-header">
+                    <h2 class="text-xl font-bold text-gray-800">1. 核心指标概览</h2>
+                    <span
+                        class="text-xs font-mono text-brand bg-orange-50 px-2 py-1 rounded">PART
+                        1</span>
+                </div>
+                <div class='tableauPlaceholder' id='viz1764641059313'
+                    style='position: relative'>
+                    <noscript><a href='#'><img alt='Dashboard 1 '
+                                src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;Pa&#47;Part1_17646305739620&#47;Dashboard1&#47;1_rss.png'
+                                style='border: none' /></a></noscript>
+                    <object class='tableauViz' style='display:none;'>
+                        <param name='host_url'
+                            value='https%3A%2F%2Fpublic.tableau.com%2F' />
+                        <param name='embed_code_version' value='3' />
+                        <param name='site_root' value />
+                        <param name='name'
+                            value='Part1_17646305739620&#47;Dashboard1' />
+                        <param name='tabs' value='no' />
+                        <param name='toolbar' value='yes' />
+                        <param name='animate_transition' value='yes' />
+                        <param name='display_static_image' value='yes' />
+                        <param name='display_spinner' value='yes' />
+                        <param name='display_overlay' value='yes' />
+                        <param name='display_count' value='yes' />
+                        <param name='language' value='zh-CN' />
+                    </object>
+                </div>
+            </div>
+
+            <div class="slide-container" id="slide-1">
+                <div class="slide-header">
+                    <h2 class="text-xl font-bold text-gray-800">2. 趋势深度分析</h2>
+                    <span
+                        class="text-xs font-mono text-brand bg-orange-50 px-2 py-1 rounded">PART
+                        2</span>
+                </div>
+                <div class='tableauPlaceholder' id='viz1764641088775'
+                    style='position: relative'>
+                    <noscript><a href='#'><img alt='Dashboard 1 '
+                                src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;34&#47;345_17646304049830&#47;Dashboard1&#47;1_rss.png'
+                                style='border: none' /></a></noscript>
+                    <object class='tableauViz' style='display:none;'>
+                        <param name='host_url'
+                            value='https%3A%2F%2Fpublic.tableau.com%2F' />
+                        <param name='embed_code_version' value='3' />
+                        <param name='site_root' value />
+                        <param name='name'
+                            value='345_17646304049830&#47;Dashboard1' />
+                        <param name='tabs' value='no' />
+                        <param name='toolbar' value='yes' />
+                        <param name='animate_transition' value='yes' />
+                        <param name='display_static_image' value='yes' />
+                        <param name='display_spinner' value='yes' />
+                        <param name='display_overlay' value='yes' />
+                        <param name='display_count' value='yes' />
+                        <param name='language' value='zh-CN' />
+                    </object>
+                </div>
+            </div>
+
+            <div class="slide-container" id="slide-2">
+                <div class="slide-header">
+                    <h2 class="text-xl font-bold text-gray-800">3. 详细数据报表</h2>
+                    <span
+                        class="text-xs font-mono text-brand bg-orange-50 px-2 py-1 rounded">PART
+                        3</span>
+                </div>
+                <div class='tableauPlaceholder' id='viz1764641108125'
+                    style='position: relative'>
+                    <noscript><a href='#'><img alt='仪表板 1 '
+                                src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;2B&#47;2Book120251118&#47;1&#47;1_rss.png'
+                                style='border: none' /></a></noscript>
+                    <object class='tableauViz' style='display:none;'>
+                        <param name='host_url'
+                            value='https%3A%2F%2Fpublic.tableau.com%2F' />
+                        <param name='embed_code_version' value='3' />
+                        <param name='site_root' value />
+                        <param name='name' value='2Book120251118&#47;1' />
+                        <param name='tabs' value='no' />
+                        <param name='toolbar' value='yes' />
+                        <param name='animate_transition' value='yes' />
+                        <param name='display_static_image' value='yes' />
+                        <param name='display_spinner' value='yes' />
+                        <param name='display_overlay' value='yes' />
+                        <param name='display_count' value='yes' />
+                        <param name='language' value='zh-CN' />
+                    </object>
+                </div>
+            </div>
+
+            <div class="indicators">
+                <div class="dot active" onclick="goToSlide(0)"></div>
+                <div class="dot" onclick="goToSlide(1)"></div>
+                <div class="dot" onclick="goToSlide(2)"></div>
+            </div>
+        </div>
+
+        <script
+            src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+        <script
+            src='https://public.tableau.com/javascripts/api/viz_v1.js'></script>
+
+        <script>
+        // ==========================================
+        // 1. Tableau 智能加载 (修复尺寸 Bug)
+        // ==========================================
+        document.addEventListener("DOMContentLoaded", function() {
+            var divs = document.getElementsByClassName('tableauPlaceholder');
+            for(let i=0; i<divs.length; i++) {
+                let divElement = divs[i];
+                let vizElement = divElement.getElementsByTagName('object')[0];
+                if (vizElement) {
+                    // 关键修复：强制宽度 100% 适配玻璃卡片，
+                    // 而不是使用 Tableau 生成的硬编码像素宽度
+                    vizElement.style.width = '100%';
+                    vizElement.style.height = '100%'; 
+                }
+            }
+        });
+
+        // ==========================================
+        // 2. 幻灯片逻辑 (Slides)
+        // ==========================================
+        let currentSlide = 0;
+        const totalSlides = 3;
+        
+        function updateSlides() {
+            for (let i = 0; i < totalSlides; i++) {
+                const slide = document.getElementById(`slide-${i}`);
+                const dot = document.querySelectorAll('.dot')[i];
+                
+                // 清理所有状态
+                slide.className = 'slide-container'; 
+                dot.classList.remove('active');
+
+                if (i === currentSlide) {
+                    slide.classList.add('active');
+                    dot.classList.add('active');
+                } else if (i < currentSlide) {
+                    slide.classList.add('prev'); // 左侧退出
+                } else {
+                    slide.classList.add('next'); // 右侧等待
+                }
+            }
+        }
+
+        function changeSlide(direction) {
+            currentSlide += direction;
+            if (currentSlide >= totalSlides) currentSlide = 0;
+            if (currentSlide < 0) currentSlide = totalSlides - 1;
+            updateSlides();
+        }
+
+        function goToSlide(index) {
+            currentSlide = index;
+            updateSlides();
+        }
+
+        // 键盘支持
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight') changeSlide(1);
+            if (e.key === 'ArrowLeft') changeSlide(-1);
+        });
+
+        // ==========================================
+        // 3. 3D 背景逻辑 (Three.js - R3F Style)
+        // ==========================================
+        const initThreeJS = () => {
+            const container = document.getElementById('canvas-container');
+            const scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0xffffff, 0.002); // 雾化效果，融合背景
+
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 35;
+
+            const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // --- 几何体与材质 ---
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            // 浅灰色方块
+            const materialGray = new THREE.MeshPhongMaterial({ color: 0xe5e7eb, shininess: 10 });
+            // 品牌色方块 (#FCAE6E)
+            const materialAccent = new THREE.MeshPhongMaterial({ color: 0xFCAE6E, shininess: 50, emissive: 0xFCAE6E, emissiveIntensity: 0.2 });
+
+            // --- 1. 背景粒子群 (InstancedMesh) ---
+            const count = 80;
+            const mesh = new THREE.InstancedMesh(geometry, materialGray, count);
+            const dummy = new THREE.Object3D();
+            
+            for (let i = 0; i < count; i++) {
+                dummy.position.set(
+                    (Math.random() - 0.5) * 70,
+                    (Math.random() - 0.5) * 50,
+                    (Math.random() - 0.5) * 40
+                );
+                dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+                const s = Math.random() * 2 + 0.5;
+                dummy.scale.set(s, s, s);
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+            }
+            scene.add(mesh);
+
+            // --- 2. 漂浮的品牌色元素 ---
+            const accentGroup = new THREE.Group();
+            const shapes = [
+                new THREE.OctahedronGeometry(1.5),
+                new THREE.TorusGeometry(1, 0.4, 16, 50),
+                new THREE.BoxGeometry(2, 2, 2)
+            ];
+            
+            for(let i=0; i<6; i++) {
+                const geom = shapes[i % shapes.length];
+                const item = new THREE.Mesh(geom, materialAccent);
+                item.position.set(
+                    (Math.random() - 0.5) * 50,
+                    (Math.random() - 0.5) * 40,
+                    (Math.random() - 0.5) * 20
+                );
+                accentGroup.add(item);
+            }
+            scene.add(accentGroup);
+
+            // --- 灯光 ---
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight.position.set(10, 20, 20);
+            scene.add(dirLight);
+
+            // --- 动画循环 ---
+            let mouseX = 0, mouseY = 0;
+
+            function animate() {
+                requestAnimationFrame(animate);
+
+                // 整体旋转
+                mesh.rotation.y += 0.0005;
+                mesh.rotation.x += 0.0002;
+
+                // 强调元素独立动画
+                accentGroup.children.forEach((child, i) => {
+                    child.rotation.x += 0.01;
+                    child.rotation.y += 0.015;
+                    // 悬浮正弦波
+                    child.position.y += Math.sin(Date.now() * 0.001 + i * 1.5) * 0.03;
+                });
+
+                // 鼠标视差
+                camera.position.x += (mouseX * 0.5 - camera.position.x) * 0.05;
+                camera.position.y += (-mouseY * 0.5 - camera.position.y) * 0.05;
+                camera.lookAt(0, 0, 0);
+
+                renderer.render(scene, camera);
+            }
+
+            // --- 事件监听 ---
+            document.addEventListener('mousemove', (e) => {
+                mouseX = (e.clientX - window.innerWidth / 2) * 0.05;
+                mouseY = (e.clientY - window.innerHeight / 2) * 0.05;
+            });
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            animate();
+        }
+
+        initThreeJS();
+    </script>
+        <script>
+        // Robust fix for Tableau iframe resizing (Appended)
+        document.addEventListener("DOMContentLoaded", function() {
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.tagName === 'IFRAME') {
+                            node.style.setProperty('width', '100%', 'important');
+                            node.style.setProperty('height', '100%', 'important');
+                            node.style.setProperty('position', 'absolute', 'important');
+                            node.style.setProperty('top', '0', 'important');
+                            node.style.setProperty('left', '0', 'important');
+                            node.setAttribute('width', '100%');
+                            node.setAttribute('height', '100%');
+                        }
+                    });
+                });
+            });
+            
+            var divs = document.getElementsByClassName('tableauPlaceholder');
+            for(let i=0; i<divs.length; i++) {
+                observer.observe(divs[i], { childList: true, subtree: true });
+            }
+        });
+    </script>
+    </body>
+</html>
